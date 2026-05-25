@@ -1,0 +1,423 @@
+================================================================================
+  IMAGE PROMPT GENERATOR — Guide CLI & MCP Server
+  Toutes les fonctionnalités de l'interface, en ligne de commande et via agent
+================================================================================
+
+
+────────────────────────────────────────────────────────────────────────────────
+  DÉMARRAGE
+────────────────────────────────────────────────────────────────────────────────
+
+  Interface graphique (GUI) :
+    python main.py
+
+  Mode ligne de commande (CLI) :
+    python main.py <sous-commande> [options]
+    python main.py --help              # liste toutes les sous-commandes
+
+  Serveur MCP (pour agents IA) :
+    python mcp_server.py
+
+
+────────────────────────────────────────────────────────────────────────────────
+  CLI — SOUS-COMMANDES
+────────────────────────────────────────────────────────────────────────────────
+
+  1. TRAITER UN DOSSIER OU UN FICHIER  →  batch
+  ─────────────────────────────────────────────
+
+  Traite toutes les images et vidéos d'un dossier (ou un seul fichier) et
+  sauvegarde les descriptions générées en fichiers .txt à côté des sources.
+
+  Syntaxe :
+    python main.py batch <chemin> [options]
+
+  Options principales :
+    -r, --recursive            Inclure les sous-dossiers
+    -c, --concurrency N        Nombre de requêtes en parallèle (défaut: 1)
+    --overwrite                Écraser les .txt existants (défaut: ignorer)
+
+  Options API / génération :
+    --url URL                  URL de base de l'API  (ex: http://localhost:1234/v1)
+    --model NOM                Nom du modèle
+    --api-key CLE              Clé API (token Bearer)
+    --payload-mode MODE        Mode d'encodage image : auto | data_uri | raw_base64
+    --system-prompt TEXTE      Prompt système envoyé au modèle
+    --temperature T            Température d'échantillonnage (0.0–2.0)
+    --top-p P                  Top-P (0.0–1.0)
+    --max-tokens N             Nombre maximum de tokens en sortie
+    --image-size PX            Redimensionner le côté le plus long avant envoi
+                                 (px). -1 = original, 0 = valeur custom de la config
+    --marker TEXTE             Marqueur de nettoyage de sortie (répétable)
+                               Tout ce qui précède le premier marqueur trouvé
+                               est supprimé de la réponse.
+
+  Exemples :
+    # Traiter tout un dossier, 4 en parallèle
+    python main.py batch /home/user/photos -r -c 4
+
+    # Traiter un fichier unique
+    python main.py batch /home/user/image.jpg
+
+    # Écraser les .txt existants avec un modèle différent
+    python main.py batch /home/user/photos --overwrite --model llava-1.6
+
+    # Serveur distant, prompt personnalisé, nettoyage de sortie
+    python main.py batch /photos \
+      --url http://192.168.1.10:8000/v1 \
+      --model Qwen2-VL-7B \
+      --system-prompt "Décris cette image comme un prompt Stable Diffusion." \
+      --max-tokens 512 \
+      --marker "**Prompt:**" \
+      --marker "Prompt:"
+
+    # Envoyer les images en taille originale, sans redimensionnement
+    python main.py batch /photos --image-size -1
+
+
+  2. DÉCRIRE UN SEUL FICHIER  →  describe
+  ────────────────────────────────────────
+
+  Traite un fichier unique et affiche (ou sauvegarde) le résultat.
+
+  Syntaxe :
+    python main.py describe <fichier> [options]
+
+  Options :
+    --save                     Sauvegarder le résultat en .txt à côté du fichier
+                               (sans --save : affichage dans le terminal uniquement)
+    (+ toutes les options API/génération de batch)
+
+  Exemples :
+    # Afficher la description dans le terminal
+    python main.py describe /home/user/photo.jpg
+
+    # Générer et sauvegarder le .txt
+    python main.py describe /home/user/photo.jpg --save
+
+    # Avec options avancées
+    python main.py describe /home/user/video.mp4 --save \
+      --model llava --temperature 0.5 --max-tokens 256
+
+
+  3. CHERCHER ET REMPLACER  →  find-replace
+  ──────────────────────────────────────────
+
+  Recherche et remplace (ou supprime) du texte dans tous les fichiers .txt
+  d'un dossier. Équivalent de l'outil "Find & Replace" de l'interface.
+
+  Syntaxe :
+    python main.py find-replace <dossier> --find TEXTE [options]
+
+  Options :
+    --find TEXTE               Texte à rechercher (obligatoire)
+    --replace TEXTE            Texte de remplacement (omis = suppression)
+    -r, --recursive            Inclure les sous-dossiers
+    --case-sensitive           Respect de la casse (défaut: insensible)
+    --dry-run                  Prévisualiser sans rien écrire
+
+  Exemples :
+    # Remplacer "cat" par "chat" dans tout le dossier
+    python main.py find-replace /home/user/photos --find "cat" --replace "chat"
+
+    # Supprimer toutes les occurrences de "NSFW" (remplacement vide)
+    python main.py find-replace /home/user/photos --find "NSFW"
+
+    # Prévisualiser les changements sans écrire
+    python main.py find-replace /home/user/photos --find "dog" --dry-run
+
+    # Remplacement récursif, sensible à la casse
+    python main.py find-replace /home/user --find "Chien" --replace "chien" \
+      -r --case-sensitive
+
+
+  4. FILTRER PAR CONTENU DE PROMPT  →  search
+  ─────────────────────────────────────────────
+
+  Cherche les fichiers dont le prompt .txt contient les mots voulus.
+  Équivalent de la barre de recherche dans l'interface.
+
+  Syntaxe :
+    python main.py search <dossier> <requête> [options]
+
+  Modes :
+    - Phrase exacte :  "une photo de chat"  → la phrase doit apparaître telle quelle
+    - Mode AND :       "chat+chien+forêt"   → chaque mot doit être présent (ordre libre)
+
+  Options :
+    -r, --recursive      Inclure les sous-dossiers
+    --case-sensitive     Respect de la casse
+    --snippet            Afficher un extrait du prompt pour chaque résultat
+
+  Exemples :
+    # Trouver toutes les images avec "sunset" dans le prompt
+    python main.py search /home/user/photos "sunset"
+
+    # Trouver les images contenant à la fois "girl", "forest" et "rain"
+    python main.py search /home/user/photos "girl+forest+rain"
+
+    # Afficher un extrait du prompt
+    python main.py search /home/user/photos "portrait" --snippet
+
+    # Recherche récursive insensible à la casse
+    python main.py search /home/user "Chien+Chat" -r
+
+
+  5. TESTER LA CONNEXION API  →  test
+  ────────────────────────────────────
+
+  Vérifie que l'API répond et liste les modèles disponibles.
+  Équivalent du bouton "Test Connection" de l'interface.
+
+  Syntaxe :
+    python main.py test [options]
+
+  Options :
+    --url URL          URL à tester (défaut: valeur sauvegardée)
+    --model NOM        Affiché dans le résultat (non utilisé pour le test)
+
+  Exemples :
+    # Tester avec la config sauvegardée
+    python main.py test
+
+    # Tester une URL spécifique
+    python main.py test --url http://192.168.1.24:8000/v1
+
+
+  6. GÉRER LA CONFIGURATION  →  config
+  ─────────────────────────────────────
+
+  Affiche ou modifie la configuration persistante (équivalent du panneau
+  Paramètres de l'interface). Les changements sont sauvegardés immédiatement.
+
+  Syntaxe :
+    python main.py config               # afficher toute la config (JSON)
+    python main.py config --set cle=valeur [cle2=valeur2 ...]
+
+  Clés disponibles :
+    API / Connexion :
+      api_base_url          URL de base de l'API
+      model_name            Nom du modèle
+      api_key               Clé API (Bearer token)
+      payload_mode          auto | data_uri | raw_base64
+
+    Génération :
+      system_prompt         Prompt système
+      temperature           0.0 – 2.0
+      top_p                 0.0 – 1.0
+      use_top_k             true | false
+      top_k                 Entier
+      use_repetition_penalty  true | false
+      repetition_penalty    0.5 – 3.0
+      use_max_tokens        true | false
+      max_tokens            Entier
+
+    Image :
+      image_size            Taille en px (-1 = original, 0 = custom)
+      image_size_custom     Taille custom en px
+
+    Vidéo :
+      video_mode            frame_extraction | native_video
+      frame_mode            every_n_seconds | every_n_frames | max_n_frames
+      frame_every_n_seconds Intervalle entre frames (secondes)
+      frame_every_n_frames  Intervalle en nombre de frames
+      frame_max_n           Nombre max de frames à extraire
+
+    Comportement :
+      overwrite_policy      skip | overwrite | ask_batch
+      batch_concurrency     Nombre de requêtes parallèles
+
+    Nettoyage de sortie :
+      use_output_markers    true | false
+      output_markers        Liste de marqueurs séparés par des virgules
+
+  Exemples :
+    # Voir la configuration complète
+    python main.py config
+
+    # Changer la température et le modèle
+    python main.py config --set temperature=0.5 model_name=llava-1.6
+
+    # Passer en mode overwrite par défaut
+    python main.py config --set overwrite_policy=overwrite
+
+    # Configurer l'URL et la clé API
+    python main.py config --set api_base_url=http://192.168.1.24:8000/v1 \
+      api_key=sk-montoken
+
+    # Activer le nettoyage de sortie avec des marqueurs
+    python main.py config --set use_output_markers=true \
+      output_markers="**Prompt:**,Prompt:"
+
+    # Configurer la vidéo : extraire au max 12 frames
+    python main.py config --set frame_mode=max_n_frames frame_max_n=12
+
+
+────────────────────────────────────────────────────────────────────────────────
+  SERVEUR MCP — OUTILS POUR AGENTS IA
+────────────────────────────────────────────────────────────────────────────────
+
+  Le serveur MCP expose les mêmes fonctionnalités sous forme d'outils que
+  n'importe quel agent IA compatible (Claude Code, etc.) peut appeler.
+
+  Démarrage :
+    python mcp_server.py
+
+  Intégration dans Claude Code (~/.claude/settings.json) :
+    {
+      "mcpServers": {
+        "image-prompt-generator": {
+          "command": "python3",
+          "args": ["/chemin/absolu/vers/mcp_server.py"]
+        }
+      }
+    }
+
+  Redémarrer Claude Code après avoir modifié settings.json.
+  Vérifier que le serveur est actif avec : /mcp dans Claude Code.
+
+
+  OUTILS DISPONIBLES
+  ──────────────────
+
+  ┌─────────────────────────────┬──────────────────────────────────────────────┐
+  │ Outil                       │ Description                                  │
+  ├─────────────────────────────┼──────────────────────────────────────────────┤
+  │ describe_image              │ Décrit une image ou vidéo. Paramètres :      │
+  │                             │ path, url, model, api_key, system_prompt,    │
+  │                             │ temperature, max_tokens, image_size,         │
+  │                             │ payload_mode, save (bool)                    │
+  ├─────────────────────────────┼──────────────────────────────────────────────┤
+  │ describe_folder             │ Traite tout un dossier. Paramètres :         │
+  │                             │ folder, recursive, overwrite, concurrency,   │
+  │                             │ url, model, api_key, system_prompt,          │
+  │                             │ temperature, max_tokens, image_size,         │
+  │                             │ payload_mode                                 │
+  ├─────────────────────────────┼──────────────────────────────────────────────┤
+  │ list_prompt_files           │ Liste les fichiers avec/sans .txt associé.   │
+  │                             │ Paramètres : folder, recursive               │
+  ├─────────────────────────────┼──────────────────────────────────────────────┤
+  │ read_prompt                 │ Lit le contenu du .txt d'un fichier.         │
+  │                             │ Paramètre : path                             │
+  ├─────────────────────────────┼──────────────────────────────────────────────┤
+  │ write_prompt                │ Écrit (ou écrase) le .txt d'un fichier.      │
+  │                             │ Paramètres : path, text                      │
+  ├─────────────────────────────┼──────────────────────────────────────────────┤
+  │ search_prompts              │ Filtre les fichiers par contenu de prompt.   │
+  │                             │ Paramètres : folder, query (mot1+mot2),      │
+  │                             │ recursive, case_sensitive, show_snippets     │
+  ├─────────────────────────────┼──────────────────────────────────────────────┤
+  │ find_replace_in_prompts     │ Cherche et remplace dans les .txt.           │
+  │                             │ Paramètres : folder, find, replace,          │
+  │                             │ case_sensitive, recursive, dry_run           │
+  ├─────────────────────────────┼──────────────────────────────────────────────┤
+  │ test_connection             │ Teste l'API et liste les modèles.            │
+  │                             │ Paramètres : url, model                      │
+  ├─────────────────────────────┼──────────────────────────────────────────────┤
+  │ get_config                  │ Retourne la config actuelle (JSON).          │
+  │                             │ Aucun paramètre.                             │
+  ├─────────────────────────────┼──────────────────────────────────────────────┤
+  │ set_config                  │ Modifie des valeurs de config.               │
+  │                             │ Paramètre : settings (ex: "temp=0.8, ...")   │
+  └─────────────────────────────┴──────────────────────────────────────────────┘
+
+
+  EXEMPLES D'UTILISATION PAR UN AGENT
+  ────────────────────────────────────
+
+  Un agent peut par exemple :
+
+  • Décrire une image et lire le résultat :
+      describe_image(path="/data/photo.jpg")
+      read_prompt(path="/data/photo.jpg")
+
+  • Traiter 100 images en parallèle :
+      describe_folder(folder="/data/photos", concurrency=6, overwrite=False)
+
+  • Vérifier quelles images n'ont pas encore de prompt :
+      list_prompt_files(folder="/data/photos")
+
+  • Trouver toutes les images avec "sunset" et "beach" dans le prompt :
+      search_prompts(folder="/data/photos", query="sunset+beach")
+
+  • Remplacer un mot dans tous les .txt d'un dossier :
+      find_replace_in_prompts(folder="/data", find="cat", replace="chat")
+
+  • Prévisualiser avant de remplacer :
+      find_replace_in_prompts(folder="/data", find="old_term", dry_run=True)
+
+  • Lire, modifier et sauvegarder un prompt manuellement :
+      text = read_prompt(path="/data/photo.jpg")
+      # ... l'agent modifie text ...
+      write_prompt(path="/data/photo.jpg", text=text_modifié)
+
+  • Changer le modèle et la température pour toute la session :
+      set_config(settings="model_name=llava-1.6, temperature=0.5")
+
+  • Tester la connexion avant de lancer un batch :
+      test_connection(url="http://192.168.1.24:8000/v1")
+
+
+────────────────────────────────────────────────────────────────────────────────
+  CORRESPONDANCE GUI ↔ CLI ↔ MCP
+────────────────────────────────────────────────────────────────────────────────
+
+  Fonctionnalité GUI              CLI                         MCP
+  ─────────────────────────────── ─────────────────────────── ────────────────────────────
+  Ajouter fichiers/dossier        batch <chemin>              describe_folder(folder=...)
+  Traiter la sélection            batch <fichier>             describe_image(path=...)
+  Lancer le batch                 batch <dossier> -c N        describe_folder(..., concurrency=N)
+  Annuler le batch                Ctrl+C                      (non applicable)
+  Relancer les erreurs            batch <dossier> (refiltrer) describe_folder(..., overwrite=False)
+  Save Text (bouton)              describe --save             write_prompt(path, text)
+  Régénérer                       describe --save --overwrite describe_image(..., save=True)
+  Find & Replace                  find-replace                find_replace_in_prompts(...)
+  Barre de recherche              search                      search_prompts(...)
+  Test Connection                 test                        test_connection(...)
+  Paramètres → voir               config                      get_config()
+  Paramètres → modifier           config --set cle=val        set_config(settings="k=v")
+  Paramètres → URL                --url / config --set        url= param ou set_config
+  Paramètres → Modèle             --model / config --set      model= param ou set_config
+  Paramètres → Température        --temperature               temperature= param ou set_config
+  Paramètres → System prompt      --system-prompt             system_prompt= param ou set_config
+  Paramètres → Payload mode       --payload-mode              payload_mode= param ou set_config
+  Paramètres → Taille image       --image-size                image_size= param ou set_config
+  Paramètres → Overwrite policy   --overwrite                 overwrite= param ou set_config
+  Paramètres → Concurrence        -c N                        concurrency= param ou set_config
+  Paramètres → Marqueurs          --marker TEXTE              set_config("output_markers=...")
+  Lire un prompt existant         cat fichier.txt             read_prompt(path=...)
+  Écrire un prompt manuellement   echo "..." > fichier.txt    write_prompt(path, text)
+  Lister fichiers + état .txt     (GUI file list)             list_prompt_files(folder=...)
+
+
+────────────────────────────────────────────────────────────────────────────────
+  INSTALLATION DES DÉPENDANCES
+────────────────────────────────────────────────────────────────────────────────
+
+  pip install -r requirements.txt
+
+  Dépendances :
+    PySide6         Interface graphique (GUI uniquement)
+    httpx           Requêtes HTTP vers l'API LLM
+    Pillow          Traitement et redimensionnement des images
+    opencv-python   Extraction de frames vidéo
+    numpy           Manipulation des frames (tableaux numpy)
+    mcp             Protocole MCP pour les agents IA
+
+
+  Note : PySide6 n'est pas importé en mode CLI ou MCP, donc l'application
+  peut tourner en environnement serveur sans affichage graphique.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  FICHIER DE CONFIGURATION
+────────────────────────────────────────────────────────────────────────────────
+
+  La config est sauvegardée automatiquement dans :
+    ~/.config/prompt_image/config.json
+
+  Elle est partagée entre le GUI, le CLI et le serveur MCP.
+  Toute modification via l'un des trois systèmes est immédiatement
+  prise en compte par les autres.
+
+================================================================================
