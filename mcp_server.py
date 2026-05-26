@@ -265,6 +265,115 @@ def find_replace_in_prompts(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+#  SAM3 masking tools
+# ──────────────────────────────────────────────────────────────────────────────
+
+@mcp.tool()
+def generate_masks(
+    path: str,
+    labels: str,
+    confidence: float = 0.0,
+    opacity: int = 0,
+    invert: bool = False,
+    model_dir: str = "",
+    model_file: str = "",
+    device: str = "",
+) -> str:
+    """
+    Run SAM3 segmentation on a single image and generate a combined RGBA mask file.
+
+    All labels are merged into one PNG: {image_stem}-masklabel.png
+    placed next to the source image.
+
+    Args:
+        path:       Absolute path to the image.
+        labels:     Comma-separated list of objects to segment. Example: "face, hands"
+        confidence: Detection threshold 0.05–0.95 (0 = use saved config).
+        opacity:    Mask alpha 0–255 (0 = use saved config).
+        invert:     Mask the background instead of the selection.
+        model_dir:  Override SAM3 model directory (empty = use saved config).
+        model_file: Override SAM3 model file (empty = use saved config).
+        device:     "auto" | "cuda" | "cpu" (empty = use saved config).
+    Returns a summary listing the created mask file.
+    """
+    from pathlib import Path as P
+    from app.cli.runner import get_config, generate_masks_one
+
+    overrides = {}
+    if model_dir:   overrides["sam3_model_dir"]  = model_dir
+    if model_file:  overrides["sam3_model_file"] = model_file
+    if device:      overrides["sam3_device"]      = device
+    if confidence:  overrides["sam3_confidence"]  = confidence
+    if opacity:     overrides["sam3_mask_opacity"] = opacity
+    if invert:      overrides["sam3_mask_invert"]  = invert
+
+    cfg = get_config(**overrides)
+    label_list = [lbl.strip() for lbl in labels.split(",") if lbl.strip()]
+    if not label_list:
+        return "No labels provided."
+
+    masks = generate_masks_one(P(path), label_list, cfg)
+    if not masks:
+        return f"No segments found for labels: {labels}"
+    return "Created:\n" + "\n".join(f"  {m}" for m in masks)
+
+
+@mcp.tool()
+def generate_masks_folder(
+    folder: str,
+    labels: str,
+    recursive: bool = False,
+    confidence: float = 0.0,
+    opacity: int = 0,
+    invert: bool = False,
+    model_dir: str = "",
+    model_file: str = "",
+    device: str = "",
+) -> str:
+    """
+    Run SAM3 segmentation on all images in a folder.
+
+    Args:
+        folder:     Absolute path to the folder.
+        labels:     Comma-separated list of objects to segment. Example: "logo, text"
+        recursive:  Include subfolders (default: false).
+        confidence: Detection threshold 0.05–0.95 (0 = use saved config).
+        opacity:    Mask alpha 0–255 (0 = use saved config).
+        invert:     Mask the background instead of the selection.
+        model_dir:  Override SAM3 model directory.
+        model_file: Override SAM3 model file.
+        device:     "auto" | "cuda" | "cpu".
+    Returns a processing summary.
+    """
+    from app.cli.runner import collect_paths, get_config, generate_masks_batch
+
+    overrides = {}
+    if model_dir:   overrides["sam3_model_dir"]  = model_dir
+    if model_file:  overrides["sam3_model_file"] = model_file
+    if device:      overrides["sam3_device"]      = device
+    if confidence:  overrides["sam3_confidence"]  = confidence
+    if opacity:     overrides["sam3_mask_opacity"] = opacity
+    if invert:      overrides["sam3_mask_invert"]  = invert
+
+    cfg = get_config(**overrides)
+    label_list = [lbl.strip() for lbl in labels.split(",") if lbl.strip()]
+    if not label_list:
+        return "No labels provided."
+
+    paths = collect_paths(folder, recursive=recursive)
+    if not paths:
+        return "No supported image files found."
+
+    results = generate_masks_batch(paths, label_list, cfg)
+    ok = len(results["ok"])
+    total_masks = sum(len(r["masks"]) for r in results["ok"])
+    lines = [f"Processed {ok}/{len(paths)} image(s) — {total_masks} mask file(s) created."]
+    for e in results["errors"]:
+        lines.append(f"  ERROR  {e['path']}: {e['error']}")
+    return "\n".join(lines)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 #  Config & connection tools
 # ──────────────────────────────────────────────────────────────────────────────
 

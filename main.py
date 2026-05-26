@@ -6,6 +6,7 @@ import sys
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _run_gui():
+    import typing_extensions  # must be imported before PySide6 (Qt adds typing.Self which breaks typing_extensions.Self on Python 3.10)
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QColor, QPalette
     from PySide6.QtWidgets import QApplication
@@ -190,6 +191,47 @@ def cmd_test(args):
         print("  Models: " + ", ".join(r["models"][:10]))
 
 
+# ── mask ─────────────────────────────────────────────────────────────────────
+
+def cmd_mask(args):
+    from pathlib import Path
+    from app.cli.runner import collect_paths, get_config, generate_masks_one, generate_masks_batch
+
+    overrides = {}
+    if getattr(args, "model_dir",  None): overrides["sam3_model_dir"]   = args.model_dir
+    if getattr(args, "model_file", None): overrides["sam3_model_file"]  = args.model_file
+    if getattr(args, "device",     None): overrides["sam3_device"]      = args.device
+    if getattr(args, "confidence", None): overrides["sam3_confidence"]  = args.confidence
+    if getattr(args, "opacity",    None): overrides["sam3_mask_opacity"] = args.opacity
+    if getattr(args, "invert",     None): overrides["sam3_mask_invert"] = args.invert
+    cfg = get_config(**overrides)
+
+    labels = [lbl.strip() for lbl in args.labels.split(",") if lbl.strip()]
+    if not labels:
+        print("No labels provided.", file=sys.stderr); sys.exit(1)
+
+    source = Path(args.source)
+    if source.is_file():
+        print(f"Processing {source.name}…")
+        try:
+            masks = generate_masks_one(source, labels, cfg)
+            for m in masks:
+                print(f"  Created → {m}")
+            if not masks:
+                print("  No segments found.")
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr); sys.exit(1)
+    else:
+        paths = collect_paths(str(source), recursive=args.recursive)
+        if not paths:
+            print("No supported image files found.", file=sys.stderr); sys.exit(1)
+        print(f"Processing {len(paths)} image(s)…")
+        r = generate_masks_batch(paths, labels, cfg, progress_cb=_progress)
+        total_masks = sum(len(x.get("masks", [])) for x in r["ok"])
+        print(f"\nDone — {len(r['ok'])} OK, {len(r['errors'])} error(s) — {total_masks} mask file(s) created.")
+        if r["errors"]: sys.exit(1)
+
+
 # ── config ───────────────────────────────────────────────────────────────────
 
 def cmd_config(args):
@@ -218,7 +260,7 @@ def main():
         prog="python main.py",
         description="Image Prompt Generator — Vision LLM tool.",
     )
-    sub = parser.add_subparsers(dest="cmd")
+    sub = parser.add_subparsers(dest="cmd", metavar="cmd")
 
     # ── batch ────────────────────────────────────────────────────────────────
     p_batch = sub.add_parser("batch", help="Process all images/videos in a file or folder.")
@@ -262,6 +304,19 @@ def main():
     p_test.add_argument("--url",   metavar="URL",  help="API base URL")
     p_test.add_argument("--model", metavar="NAME", help="Model name (informational only)")
 
+    # ── mask ─────────────────────────────────────────────────────────────────
+    p_mask = sub.add_parser("mask", help="Run SAM3 segmentation and generate mask PNG files.")
+    p_mask.add_argument("source",  help="Image file or folder path.")
+    p_mask.add_argument("labels",  help='Comma-separated labels. Example: "face,hands"')
+    p_mask.add_argument("-r", "--recursive", action="store_true", help="Include subfolders.")
+    p_mask.add_argument("--model-dir",   metavar="DIR",  help="SAM3 model directory override.")
+    p_mask.add_argument("--model-file",  metavar="FILE", help="SAM3 model filename override.")
+    p_mask.add_argument("--device",      metavar="DEV",  choices=["auto", "cuda", "cpu"],
+                        help="Device: auto | cuda | cpu (default: auto)")
+    p_mask.add_argument("--confidence",  metavar="F",    type=float, help="Detection threshold 0.05–0.95.")
+    p_mask.add_argument("--opacity",     metavar="N",    type=int,   help="Mask alpha 0–255.")
+    p_mask.add_argument("--invert",      action="store_true",        help="Mask background instead of selection.")
+
     # ── config ───────────────────────────────────────────────────────────────
     p_cfg = sub.add_parser("config", help="Show or edit the persistent configuration.")
     p_cfg.add_argument("--set", nargs="+", metavar="key=value",
@@ -269,12 +324,13 @@ def main():
 
     args = parser.parse_args()
 
-    if args.cmd == "batch":        cmd_batch(args)
-    elif args.cmd == "describe":   cmd_describe(args)
+    if args.cmd == "batch":          cmd_batch(args)
+    elif args.cmd == "describe":     cmd_describe(args)
     elif args.cmd == "find-replace": cmd_find_replace(args)
-    elif args.cmd == "search":     cmd_search(args)
-    elif args.cmd == "test":       cmd_test(args)
-    elif args.cmd == "config":     cmd_config(args)
+    elif args.cmd == "search":       cmd_search(args)
+    elif args.cmd == "test":         cmd_test(args)
+    elif args.cmd == "config":       cmd_config(args)
+    elif args.cmd == "mask":         cmd_mask(args)
     else:
         _run_gui()
 

@@ -20,6 +20,7 @@ from app.ui.find_replace_dialog import FindReplaceDialog
 from app.ui.preview_panel import PreviewPanel
 from app.workers.batch_worker import BatchWorker
 from app.workers.connection_tester_worker import ConnectionTester
+from app.workers.sam_worker import SamWorker
 
 
 class MainWindow(QMainWindow):
@@ -28,6 +29,7 @@ class MainWindow(QMainWindow):
         self._config_mgr = ConfigManager.instance()
         self._batch_worker: Optional[BatchWorker] = None
         self._conn_tester: Optional[ConnectionTester] = None
+        self._sam_worker: Optional[SamWorker] = None
 
         # Debounce config saves triggered by settings changes
         self._save_timer = QTimer(self)
@@ -122,6 +124,9 @@ class MainWindow(QMainWindow):
         self._control.process_selected_requested.connect(self._process_selected)
         self._control.test_connection_requested.connect(self._test_connection)
         self._control.settings_changed.connect(self._on_settings_changed)
+        self._control.sam_run_selected_requested.connect(self._start_sam_selected)
+        self._control.sam_run_batch_requested.connect(self._start_sam_batch)
+        self._control.sam_cancel_requested.connect(self._cancel_sam)
 
     # ------------------------------------------------------------------ #
     #  File loading
@@ -263,6 +268,61 @@ class MainWindow(QMainWindow):
             self._batch_worker.request_cancel()
             self._control.log_widget.append_log("Cancel requested — stopping after current item.", "warning")
 
+    # ------------------------------------------------------------------ #
+    #  SAM masking
+    # ------------------------------------------------------------------ #
+
+    def _start_sam_selected(self, labels: List[str]):
+        items = self._file_panel.selected_items()
+        if not items:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "Aucune sélection",
+                "Sélectionnez au moins une image dans la liste."
+            )
+            return
+        self._launch_sam(items, labels)
+
+    def _start_sam_batch(self, labels: List[str]):
+        items = self._file_panel.all_items()
+        if not items:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "Liste vide",
+                "Ajoutez des images à la liste d'abord."
+            )
+            return
+        self._launch_sam(items, labels)
+
+    def _launch_sam(self, items, labels: List[str]):
+        if self._sam_worker and self._sam_worker.isRunning():
+            return
+        cfg = self._config_mgr.config
+        self._sam_worker = SamWorker(items, labels, cfg)
+        w = self._sam_worker
+        w.log_message.connect(self._control.sam_log_widget.append_log)
+        w.progress.connect(self._control.update_sam_progress)
+        w.item_finished.connect(
+            lambda item, paths: self.statusBar().showMessage(
+                f"SAM : {item.path.name} — {len(paths)} masque(s) créé(s)"
+            )
+        )
+        w.finished.connect(self._on_sam_finished)
+        w.start()
+        self._control.set_sam_running(True)
+        self.statusBar().showMessage(
+            f"SAM3 — {len(items)} image(s) — labels : {', '.join(labels)}"
+        )
+
+    def _cancel_sam(self):
+        if self._sam_worker and self._sam_worker.isRunning():
+            self._sam_worker.request_cancel()
+            self._control.sam_log_widget.append_log("Annulation demandée.", "warning")
+
+    def _on_sam_finished(self):
+        self._control.set_sam_running(False)
+        self.statusBar().showMessage("SAM3 terminé.")
+
     def _on_item_finished(self, item: FileItem, result: str):
         self._file_panel.update_item_status(item)
         self._preview.show_item_result(item)
@@ -273,8 +333,47 @@ class MainWindow(QMainWindow):
         items = self._file_panel.all_items()
         done = sum(1 for i in items if i.status == ItemStatus.DONE)
         failed = sum(1 for i in items if i.status == ItemStatus.FAILED)
-        self.statusBar().showMessage(f"Batch complete — {done} done, {failed} failed.")
+        self.statusBar().showMessage(f"Batch LLM terminé — {done} OK, {failed} erreur(s).")
         self._file_panel._update_status()
+
+        # If SAM3 is enabled, unload LLM model first to free VRAM, then start SAM3
+        cfg = self._config_mgr.config
+        if cfg.sam3_enabled:
+            labels = [lbl.strip() for lbl in cfg.sam3_labels.split(",") if lbl.strip()]
+            if labels:
+                done_items = [i for i in items if i.status == ItemStatus.DONE]
+                if done_items:
+                    self._control.sam_log_widget.append_log(
+                        "Batch LLM terminé — déchargement du modèle LLM pour libérer la VRAM…", "info"
+                    )
+                    self._unload_llm_then_sam(done_items, labels)
+
+    def _unload_llm_then_sam(self, items, labels):
+        from PySide6.QtCore import QThread, Signal as _Signal
+        from app.cli.runner import unload_llm_model
+
+        cfg = self._config_mgr.config
+
+        class _UnloadWorker(QThread):
+            unloaded = _Signal(bool, str)
+
+            def run(self_w):
+                result = unload_llm_model(cfg)
+                self_w.unloaded.emit(result["ok"], result["message"])
+
+        self._unload_worker = _UnloadWorker()
+        w = self._unload_worker
+
+        def _on_unloaded(ok, msg):
+            level = "success" if ok else "warning"
+            self._control.sam_log_widget.append_log(msg, level)
+            self._control.sam_log_widget.append_log(
+                f"Lancement SAM3 sur {len(items)} image(s) — labels : {', '.join(labels)}", "info"
+            )
+            self._launch_sam(items, labels)
+
+        w.unloaded.connect(_on_unloaded)
+        w.start()
 
     # ------------------------------------------------------------------ #
     #  Connection test
@@ -352,4 +451,7 @@ class MainWindow(QMainWindow):
         if self._batch_worker and self._batch_worker.isRunning():
             self._batch_worker.request_cancel()
             self._batch_worker.wait(3000)
+        if self._sam_worker and self._sam_worker.isRunning():
+            self._sam_worker.request_cancel()
+            self._sam_worker.wait(3000)
         super().closeEvent(event)

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QFileDialog,
 )
 
 from app.config_manager import AppConfig, ConfigManager, save_config
@@ -48,6 +49,7 @@ class SettingsWidget(QWidget):
         layout.addWidget(self._build_video_group())
         layout.addWidget(self._build_behavior_group())
         layout.addWidget(self._build_cleanup_group())
+        layout.addWidget(self._build_sam_group())
 
     def _build_api_group(self) -> QGroupBox:
         box = QGroupBox("API Connection")
@@ -267,6 +269,56 @@ class SettingsWidget(QWidget):
         self._markers_edit.textChanged.connect(self._on_change)
         return box
 
+    def _build_sam_group(self) -> QGroupBox:
+        box = QGroupBox("SAM3 — Modèle")
+        form = QFormLayout(box)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+
+        # Model directory row with browse button
+        self._sam_model_dir = QLineEdit()
+        self._sam_model_dir.setPlaceholderText("/home/julien/IA/ComfyUI/models/sam3")
+        browse_model = QPushButton("…")
+        browse_model.setFixedWidth(28)
+        browse_model.setToolTip("Dossier contenant sam3.safetensors ou sam3.pt")
+        browse_model.clicked.connect(self._browse_sam_model_dir)
+        row_model = QHBoxLayout()
+        row_model.addWidget(self._sam_model_dir)
+        row_model.addWidget(browse_model)
+        form.addRow("Dossier modèle :", row_model)
+
+        self._sam_model_file = QLineEdit()
+        self._sam_model_file.setPlaceholderText("sam3.safetensors")
+        form.addRow("Fichier modèle :", self._sam_model_file)
+
+        self._sam_device = QComboBox()
+        self._sam_device.addItem("Auto (CUDA si disponible)", "auto")
+        self._sam_device.addItem("CUDA (GPU)", "cuda")
+        self._sam_device.addItem("CPU", "cpu")
+        form.addRow("Device :", self._sam_device)
+
+        self._sam_confidence = QDoubleSpinBox()
+        self._sam_confidence.setRange(0.05, 0.95)
+        self._sam_confidence.setSingleStep(0.05)
+        self._sam_confidence.setDecimals(2)
+        self._sam_confidence.setToolTip(
+            "Seuil de confiance par défaut (aussi réglable dans l'onglet SAM Masking)"
+        )
+        form.addRow("Seuil détection :", self._sam_confidence)
+
+        self._sam_model_dir.textChanged.connect(self._on_change)
+        self._sam_model_file.textChanged.connect(self._on_change)
+        self._sam_device.currentIndexChanged.connect(self._on_change)
+        self._sam_confidence.valueChanged.connect(self._on_change)
+
+        return box
+
+    def _browse_sam_model_dir(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self, "Dossier modèle SAM3", self._sam_model_dir.text() or "/"
+        )
+        if folder:
+            self._sam_model_dir.setText(folder)
+
     # ------------------------------------------------------------------ #
     #  Load / save
     # ------------------------------------------------------------------ #
@@ -308,6 +360,11 @@ class SettingsWidget(QWidget):
             self._use_markers.setChecked(config.use_output_markers)
             self._markers_edit.setPlainText("\n".join(config.output_markers))
             self._markers_edit.setEnabled(config.use_output_markers)
+
+            self._sam_model_dir.setText(config.sam3_model_dir)
+            self._sam_model_file.setText(config.sam3_model_file)
+            self._set_combo(self._sam_device, config.sam3_device)
+            self._sam_confidence.setValue(config.sam3_confidence)
         finally:
             self._loading = False
 
@@ -365,6 +422,10 @@ class SettingsWidget(QWidget):
         cfg.output_markers = [
             line for line in self._markers_edit.toPlainText().splitlines() if line.strip()
         ]
+        cfg.sam3_model_dir = self._sam_model_dir.text().strip()
+        cfg.sam3_model_file = self._sam_model_file.text().strip()
+        cfg.sam3_device = self._sam_device.currentData()
+        cfg.sam3_confidence = self._sam_confidence.value()
         save_config()
         self.settings_changed.emit(cfg)
 

@@ -52,6 +52,16 @@ class AppConfig:
     use_output_markers: bool = False
     output_markers: list = field(default_factory=list)
 
+    # SAM3 segmentation
+    sam3_enabled: bool = False          # run SAM3 together with LLM batch
+    sam3_labels: str = ""               # comma-separated labels to segment
+    sam3_model_dir: str = "/home/julien/IA/ComfyUI/models/sam3"
+    sam3_model_file: str = "sam3.pt"
+    sam3_device: str = "auto"
+    sam3_confidence: float = 0.5
+    sam3_mask_opacity: int = 200
+    sam3_mask_invert: bool = False
+
     # UI state (persisted across restarts)
     last_open_dir: str = ""
     window_geometry: list = field(default_factory=list)

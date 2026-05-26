@@ -9,14 +9,17 @@
 ────────────────────────────────────────────────────────────────────────────────
 
   Interface graphique (GUI) :
-    python main.py
+    .venv/bin/python main.py
 
   Mode ligne de commande (CLI) :
-    python main.py <sous-commande> [options]
-    python main.py --help              # liste toutes les sous-commandes
+    .venv/bin/python main.py <sous-commande> [options]
+    .venv/bin/python main.py --help              # liste toutes les sous-commandes
 
   Serveur MCP (pour agents IA) :
-    python mcp_server.py
+    .venv/bin/python mcp_server.py
+
+  Prérequis : Python 3.11+ recommandé (venv fourni dans .venv/).
+  Pour CUDA (SAM3) : torch avec support CUDA installé dans le venv.
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -62,18 +65,6 @@
     # Écraser les .txt existants avec un modèle différent
     python main.py batch /home/user/photos --overwrite --model llava-1.6
 
-    # Serveur distant, prompt personnalisé, nettoyage de sortie
-    python main.py batch /photos \
-      --url http://192.168.1.10:8000/v1 \
-      --model Qwen2-VL-7B \
-      --system-prompt "Décris cette image comme un prompt Stable Diffusion." \
-      --max-tokens 512 \
-      --marker "**Prompt:**" \
-      --marker "Prompt:"
-
-    # Envoyer les images en taille originale, sans redimensionnement
-    python main.py batch /photos --image-size -1
-
 
   2. DÉCRIRE UN SEUL FICHIER  →  describe
   ────────────────────────────────────────
@@ -89,22 +80,61 @@
     (+ toutes les options API/génération de batch)
 
   Exemples :
-    # Afficher la description dans le terminal
     python main.py describe /home/user/photo.jpg
-
-    # Générer et sauvegarder le .txt
     python main.py describe /home/user/photo.jpg --save
-
-    # Avec options avancées
-    python main.py describe /home/user/video.mp4 --save \
-      --model llava --temperature 0.5 --max-tokens 256
+    python main.py describe /home/user/video.mp4 --save --temperature 0.5
 
 
-  3. CHERCHER ET REMPLACER  →  find-replace
+  3. SEGMENTATION SAM3  →  mask
+  ──────────────────────────────
+
+  Génère un calque masque RGBA (.png) par image, en fusionnant tous les labels
+  fournis dans un seul fichier : {nom_image}-masklabel.png
+
+  Le masque est blanc avec une opacité configurable sur les zones sélectionnées,
+  transparent ailleurs. Option d'inversion pour masquer le fond.
+
+  Syntaxe :
+    python main.py mask <source> "<labels>" [options]
+
+  Arguments :
+    source         Chemin vers un fichier image ou un dossier
+    labels         Labels séparés par des virgules : "face,hands" ou "lips,eyes,hair"
+
+  Options :
+    -r, --recursive            Inclure les sous-dossiers (mode dossier)
+    --device DEV               auto | cuda | cpu  (défaut: auto)
+    --confidence F             Seuil de détection 0.05–0.95 (défaut: config)
+    --opacity N                Alpha du masque 0–255 (défaut: config)
+    --invert                   Masquer le fond au lieu de la sélection
+    --model-dir DIR            Répertoire du modèle SAM3 (défaut: config)
+    --model-file FILE          Nom du fichier modèle (défaut: config)
+
+  Fichier de sortie :
+    {dossier_source}/{nom_image}-masklabel.png
+
+  Exemples :
+    # Masquer le visage et les mains sur une image
+    python main.py mask /home/user/photo.jpg "face,hands"
+
+    # Masquer lèvres, yeux et cheveux (CUDA)
+    python main.py mask /home/user/portrait.jpg "lips,eyes,hair" --device cuda
+
+    # Masquer le fond (mode inversé)
+    python main.py mask /home/user/photo.jpg "person" --invert
+
+    # Traiter tout un dossier
+    python main.py mask /home/user/photos "logo,text" -r --confidence 0.6
+
+    # Masque très opaque
+    python main.py mask /home/user/photo.jpg "face" --opacity 255
+
+
+  4. CHERCHER ET REMPLACER  →  find-replace
   ──────────────────────────────────────────
 
-  Recherche et remplace (ou supprime) du texte dans tous les fichiers .txt
-  d'un dossier. Équivalent de l'outil "Find & Replace" de l'interface.
+  Recherche et remplace (ou supprime) du texte dans tous les fichiers .txt d'un
+  dossier.
 
   Syntaxe :
     python main.py find-replace <dossier> --find TEXTE [options]
@@ -117,25 +147,15 @@
     --dry-run                  Prévisualiser sans rien écrire
 
   Exemples :
-    # Remplacer "cat" par "chat" dans tout le dossier
     python main.py find-replace /home/user/photos --find "cat" --replace "chat"
-
-    # Supprimer toutes les occurrences de "NSFW" (remplacement vide)
     python main.py find-replace /home/user/photos --find "NSFW"
-
-    # Prévisualiser les changements sans écrire
     python main.py find-replace /home/user/photos --find "dog" --dry-run
 
-    # Remplacement récursif, sensible à la casse
-    python main.py find-replace /home/user --find "Chien" --replace "chien" \
-      -r --case-sensitive
 
-
-  4. FILTRER PAR CONTENU DE PROMPT  →  search
+  5. FILTRER PAR CONTENU DE PROMPT  →  search
   ─────────────────────────────────────────────
 
   Cherche les fichiers dont le prompt .txt contient les mots voulus.
-  Équivalent de la barre de recherche dans l'interface.
 
   Syntaxe :
     python main.py search <dossier> <requête> [options]
@@ -150,45 +170,28 @@
     --snippet            Afficher un extrait du prompt pour chaque résultat
 
   Exemples :
-    # Trouver toutes les images avec "sunset" dans le prompt
     python main.py search /home/user/photos "sunset"
-
-    # Trouver les images contenant à la fois "girl", "forest" et "rain"
     python main.py search /home/user/photos "girl+forest+rain"
-
-    # Afficher un extrait du prompt
     python main.py search /home/user/photos "portrait" --snippet
 
-    # Recherche récursive insensible à la casse
-    python main.py search /home/user "Chien+Chat" -r
 
-
-  5. TESTER LA CONNEXION API  →  test
+  6. TESTER LA CONNEXION API  →  test
   ────────────────────────────────────
 
   Vérifie que l'API répond et liste les modèles disponibles.
-  Équivalent du bouton "Test Connection" de l'interface.
 
   Syntaxe :
-    python main.py test [options]
+    python main.py test [--url URL] [--model NOM]
 
-  Options :
-    --url URL          URL à tester (défaut: valeur sauvegardée)
-    --model NOM        Affiché dans le résultat (non utilisé pour le test)
-
-  Exemples :
-    # Tester avec la config sauvegardée
+  Exemple :
     python main.py test
-
-    # Tester une URL spécifique
     python main.py test --url http://192.168.1.24:8000/v1
 
 
-  6. GÉRER LA CONFIGURATION  →  config
+  7. GÉRER LA CONFIGURATION  →  config
   ─────────────────────────────────────
 
-  Affiche ou modifie la configuration persistante (équivalent du panneau
-  Paramètres de l'interface). Les changements sont sauvegardés immédiatement.
+  Affiche ou modifie la configuration persistante.
 
   Syntaxe :
     python main.py config               # afficher toute la config (JSON)
@@ -231,26 +234,40 @@
       use_output_markers    true | false
       output_markers        Liste de marqueurs séparés par des virgules
 
+    SAM3 :
+      sam3_model_dir        Répertoire du modèle SAM3
+      sam3_model_file       Nom du fichier modèle (ex: sam3.pt)
+      sam3_device           auto | cuda | cpu
+      sam3_confidence       Seuil de détection 0.05–0.95
+      sam3_mask_opacity     Opacité du masque 0–255
+      sam3_mask_invert      true | false
+      sam3_enabled          true | false  (auto-masquage après batch LLM)
+      sam3_labels           Labels par défaut (ex: face,hands)
+
   Exemples :
-    # Voir la configuration complète
     python main.py config
-
-    # Changer la température et le modèle
     python main.py config --set temperature=0.5 model_name=llava-1.6
+    python main.py config --set sam3_model_dir=/data/models/sam3 sam3_device=cuda
 
-    # Passer en mode overwrite par défaut
-    python main.py config --set overwrite_policy=overwrite
 
-    # Configurer l'URL et la clé API
-    python main.py config --set api_base_url=http://192.168.1.24:8000/v1 \
-      api_key=sk-montoken
+────────────────────────────────────────────────────────────────────────────────
+  WORKFLOW COMBINÉ LLM + SAM3
+────────────────────────────────────────────────────────────────────────────────
 
-    # Activer le nettoyage de sortie avec des marqueurs
-    python main.py config --set use_output_markers=true \
-      output_markers="**Prompt:**,Prompt:"
+  L'interface gère automatiquement la séquence :
+    1. Caption LLM de toutes les images  →  fichiers .txt
+    2. Déchargement du modèle LLM        →  libération VRAM
+    3. SAM3 sur les mêmes images         →  fichiers -masklabel.png
 
-    # Configurer la vidéo : extraire au max 12 frames
-    python main.py config --set frame_mode=max_n_frames frame_max_n=12
+  Activer avec la case "Lancer SAM3 automatiquement avec le batch LLM"
+  dans l'onglet "SAM Masking" de l'interface.
+
+  En CLI, enchaîner manuellement :
+    # Étape 1 : caption LLM
+    python main.py batch /home/user/photos
+
+    # Étape 2 : masquage SAM3
+    python main.py mask /home/user/photos "face,hands" -r
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -261,13 +278,13 @@
   n'importe quel agent IA compatible (Claude Code, etc.) peut appeler.
 
   Démarrage :
-    python mcp_server.py
+    .venv/bin/python mcp_server.py
 
   Intégration dans Claude Code (~/.claude/settings.json) :
     {
       "mcpServers": {
         "image-prompt-generator": {
-          "command": "python3",
+          "command": "/chemin/absolu/vers/.venv/bin/python",
           "args": ["/chemin/absolu/vers/mcp_server.py"]
         }
       }
@@ -280,82 +297,82 @@
   OUTILS DISPONIBLES
   ──────────────────
 
-  ┌─────────────────────────────┬──────────────────────────────────────────────┐
-  │ Outil                       │ Description                                  │
-  ├─────────────────────────────┼──────────────────────────────────────────────┤
-  │ describe_image              │ Décrit une image ou vidéo. Paramètres :      │
-  │                             │ path, url, model, api_key, system_prompt,    │
-  │                             │ temperature, max_tokens, image_size,         │
-  │                             │ payload_mode, save (bool)                    │
-  ├─────────────────────────────┼──────────────────────────────────────────────┤
-  │ describe_folder             │ Traite tout un dossier. Paramètres :         │
-  │                             │ folder, recursive, overwrite, concurrency,   │
-  │                             │ url, model, api_key, system_prompt,          │
-  │                             │ temperature, max_tokens, image_size,         │
-  │                             │ payload_mode                                 │
-  ├─────────────────────────────┼──────────────────────────────────────────────┤
-  │ list_prompt_files           │ Liste les fichiers avec/sans .txt associé.   │
-  │                             │ Paramètres : folder, recursive               │
-  ├─────────────────────────────┼──────────────────────────────────────────────┤
-  │ read_prompt                 │ Lit le contenu du .txt d'un fichier.         │
-  │                             │ Paramètre : path                             │
-  ├─────────────────────────────┼──────────────────────────────────────────────┤
-  │ write_prompt                │ Écrit (ou écrase) le .txt d'un fichier.      │
-  │                             │ Paramètres : path, text                      │
-  ├─────────────────────────────┼──────────────────────────────────────────────┤
-  │ search_prompts              │ Filtre les fichiers par contenu de prompt.   │
-  │                             │ Paramètres : folder, query (mot1+mot2),      │
-  │                             │ recursive, case_sensitive, show_snippets     │
-  ├─────────────────────────────┼──────────────────────────────────────────────┤
-  │ find_replace_in_prompts     │ Cherche et remplace dans les .txt.           │
-  │                             │ Paramètres : folder, find, replace,          │
-  │                             │ case_sensitive, recursive, dry_run           │
-  ├─────────────────────────────┼──────────────────────────────────────────────┤
-  │ test_connection             │ Teste l'API et liste les modèles.            │
-  │                             │ Paramètres : url, model                      │
-  ├─────────────────────────────┼──────────────────────────────────────────────┤
-  │ get_config                  │ Retourne la config actuelle (JSON).          │
-  │                             │ Aucun paramètre.                             │
-  ├─────────────────────────────┼──────────────────────────────────────────────┤
-  │ set_config                  │ Modifie des valeurs de config.               │
-  │                             │ Paramètre : settings (ex: "temp=0.8, ...")   │
-  └─────────────────────────────┴──────────────────────────────────────────────┘
+  ┌──────────────────────────────┬──────────────────────────────────────────────┐
+  │ Outil                        │ Description                                  │
+  ├──────────────────────────────┼──────────────────────────────────────────────┤
+  │ describe_image               │ Décrit une image ou vidéo. Paramètres :      │
+  │                              │ path, url, model, api_key, system_prompt,    │
+  │                              │ temperature, max_tokens, image_size,         │
+  │                              │ payload_mode, save (bool)                    │
+  ├──────────────────────────────┼──────────────────────────────────────────────┤
+  │ describe_folder              │ Traite tout un dossier. Paramètres :         │
+  │                              │ folder, recursive, overwrite, concurrency,   │
+  │                              │ url, model, api_key, system_prompt,          │
+  │                              │ temperature, max_tokens, image_size          │
+  ├──────────────────────────────┼──────────────────────────────────────────────┤
+  │ generate_masks               │ SAM3 sur une image. Tous les labels sont     │
+  │                              │ fusionnés en un seul fichier :               │
+  │                              │ {image}-masklabel.png                        │
+  │                              │ Paramètres : path, labels, confidence,       │
+  │                              │ opacity, invert, model_dir, model_file,      │
+  │                              │ device                                       │
+  ├──────────────────────────────┼──────────────────────────────────────────────┤
+  │ generate_masks_folder        │ SAM3 sur tout un dossier. Paramètres :       │
+  │                              │ folder, labels, recursive, confidence,       │
+  │                              │ opacity, invert, model_dir, model_file,      │
+  │                              │ device                                       │
+  ├──────────────────────────────┼──────────────────────────────────────────────┤
+  │ list_prompt_files            │ Liste les fichiers avec/sans .txt associé.   │
+  │                              │ Paramètres : folder, recursive               │
+  ├──────────────────────────────┼──────────────────────────────────────────────┤
+  │ read_prompt                  │ Lit le contenu du .txt d'un fichier.         │
+  │                              │ Paramètre : path                             │
+  ├──────────────────────────────┼──────────────────────────────────────────────┤
+  │ write_prompt                 │ Écrit (ou écrase) le .txt d'un fichier.      │
+  │                              │ Paramètres : path, text                      │
+  ├──────────────────────────────┼──────────────────────────────────────────────┤
+  │ search_prompts               │ Filtre les fichiers par contenu de prompt.   │
+  │                              │ Paramètres : folder, query (mot1+mot2),      │
+  │                              │ recursive, case_sensitive, show_snippets     │
+  ├──────────────────────────────┼──────────────────────────────────────────────┤
+  │ find_replace_in_prompts      │ Cherche et remplace dans les .txt.           │
+  │                              │ Paramètres : folder, find, replace,          │
+  │                              │ case_sensitive, recursive, dry_run           │
+  ├──────────────────────────────┼──────────────────────────────────────────────┤
+  │ test_connection              │ Teste l'API et liste les modèles.            │
+  │                              │ Paramètres : url, model                      │
+  ├──────────────────────────────┼──────────────────────────────────────────────┤
+  │ get_config                   │ Retourne la config actuelle (JSON).          │
+  ├──────────────────────────────┼──────────────────────────────────────────────┤
+  │ set_config                   │ Modifie des valeurs de config.               │
+  │                              │ Paramètre : settings ("k=v, k2=v2")          │
+  └──────────────────────────────┴──────────────────────────────────────────────┘
 
 
   EXEMPLES D'UTILISATION PAR UN AGENT
   ────────────────────────────────────
 
-  Un agent peut par exemple :
-
-  • Décrire une image et lire le résultat :
+  • Décrire une image :
       describe_image(path="/data/photo.jpg")
-      read_prompt(path="/data/photo.jpg")
 
   • Traiter 100 images en parallèle :
-      describe_folder(folder="/data/photos", concurrency=6, overwrite=False)
+      describe_folder(folder="/data/photos", concurrency=6)
 
-  • Vérifier quelles images n'ont pas encore de prompt :
-      list_prompt_files(folder="/data/photos")
+  • Générer un masque lèvres+yeux+cheveux :
+      generate_masks(path="/data/portrait.jpg", labels="lips,eyes,hair")
 
-  • Trouver toutes les images avec "sunset" et "beach" dans le prompt :
+  • Masquer les logos dans tout un dossier :
+      generate_masks_folder(folder="/data/photos", labels="logo,text")
+
+  • Workflow complet caption + masque :
+      describe_image(path="/data/photo.jpg", save=True)
+      generate_masks(path="/data/photo.jpg", labels="face,hands")
+
+  • Trouver les images avec "sunset" et "beach" :
       search_prompts(folder="/data/photos", query="sunset+beach")
 
-  • Remplacer un mot dans tous les .txt d'un dossier :
+  • Remplacer un mot dans tous les .txt :
       find_replace_in_prompts(folder="/data", find="cat", replace="chat")
-
-  • Prévisualiser avant de remplacer :
-      find_replace_in_prompts(folder="/data", find="old_term", dry_run=True)
-
-  • Lire, modifier et sauvegarder un prompt manuellement :
-      text = read_prompt(path="/data/photo.jpg")
-      # ... l'agent modifie text ...
-      write_prompt(path="/data/photo.jpg", text=text_modifié)
-
-  • Changer le modèle et la température pour toute la session :
-      set_config(settings="model_name=llava-1.6, temperature=0.5")
-
-  • Tester la connexion avant de lancer un batch :
-      test_connection(url="http://192.168.1.24:8000/v1")
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -363,28 +380,18 @@
 ────────────────────────────────────────────────────────────────────────────────
 
   Fonctionnalité GUI              CLI                         MCP
-  ─────────────────────────────── ─────────────────────────── ────────────────────────────
+  ─────────────────────────────── ─────────────────────────── ─────────────────────────────
   Ajouter fichiers/dossier        batch <chemin>              describe_folder(folder=...)
   Traiter la sélection            batch <fichier>             describe_image(path=...)
-  Lancer le batch                 batch <dossier> -c N        describe_folder(..., concurrency=N)
-  Annuler le batch                Ctrl+C                      (non applicable)
-  Relancer les erreurs            batch <dossier> (refiltrer) describe_folder(..., overwrite=False)
-  Save Text (bouton)              describe --save             write_prompt(path, text)
-  Régénérer                       describe --save --overwrite describe_image(..., save=True)
+  Lancer le batch LLM             batch <dossier> -c N        describe_folder(..., concurrency=N)
+  Onglet SAM Masking (image)      mask <fichier> "labels"     generate_masks(path, labels)
+  Onglet SAM Masking (dossier)    mask <dossier> "labels" -r  generate_masks_folder(...)
+  SAM auto après batch LLM        (case à cocher GUI)         enchaîner describe + generate_masks
   Find & Replace                  find-replace                find_replace_in_prompts(...)
   Barre de recherche              search                      search_prompts(...)
   Test Connection                 test                        test_connection(...)
   Paramètres → voir               config                      get_config()
   Paramètres → modifier           config --set cle=val        set_config(settings="k=v")
-  Paramètres → URL                --url / config --set        url= param ou set_config
-  Paramètres → Modèle             --model / config --set      model= param ou set_config
-  Paramètres → Température        --temperature               temperature= param ou set_config
-  Paramètres → System prompt      --system-prompt             system_prompt= param ou set_config
-  Paramètres → Payload mode       --payload-mode              payload_mode= param ou set_config
-  Paramètres → Taille image       --image-size                image_size= param ou set_config
-  Paramètres → Overwrite policy   --overwrite                 overwrite= param ou set_config
-  Paramètres → Concurrence        -c N                        concurrency= param ou set_config
-  Paramètres → Marqueurs          --marker TEXTE              set_config("output_markers=...")
   Lire un prompt existant         cat fichier.txt             read_prompt(path=...)
   Écrire un prompt manuellement   echo "..." > fichier.txt    write_prompt(path, text)
   Lister fichiers + état .txt     (GUI file list)             list_prompt_files(folder=...)
@@ -394,16 +401,26 @@
   INSTALLATION DES DÉPENDANCES
 ────────────────────────────────────────────────────────────────────────────────
 
+  # Créer et activer le venv Python 3.11
+  python3.11 -m venv .venv
+  source .venv/bin/activate        # Linux / macOS
+
+  # Dépendances de base + SAM3
   pip install -r requirements.txt
 
-  Dépendances :
+  # Torch CUDA (GPU recommandé pour SAM3)
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+
+  Dépendances principales :
     PySide6         Interface graphique (GUI uniquement)
     httpx           Requêtes HTTP vers l'API LLM
     Pillow          Traitement et redimensionnement des images
     opencv-python   Extraction de frames vidéo
-    numpy           Manipulation des frames (tableaux numpy)
+    numpy           Manipulation des arrays
     mcp             Protocole MCP pour les agents IA
-
+    torch           Inférence SAM3
+    torchvision     Composants CNN pour SAM3
+    einops, timm    Dépendances SAM3
 
   Note : PySide6 n'est pas importé en mode CLI ou MCP, donc l'application
   peut tourner en environnement serveur sans affichage graphique.

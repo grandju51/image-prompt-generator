@@ -230,6 +230,120 @@ def find_replace(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+#  SAM3 masking
+# ──────────────────────────────────────────────────────────────────────────────
+
+def generate_masks_one(
+    path: Path,
+    labels: List[str],
+    cfg: AppConfig,
+) -> List[Path]:
+    """Run SAM3 on a single image and return the list of created mask paths."""
+    from app.processing.sam_processor import SamProcessor
+
+    device = cfg.sam3_device
+    proc = SamProcessor()
+    proc.load(
+        model_dir=cfg.sam3_model_dir,
+        model_file=cfg.sam3_model_file,
+        device=device,
+    )
+    return proc.generate_masks(
+        image_path=path,
+        labels=labels,
+        opacity=cfg.sam3_mask_opacity,
+        invert=cfg.sam3_mask_invert,
+        confidence=cfg.sam3_confidence,
+    )
+
+
+def generate_masks_batch(
+    paths: List[Path],
+    labels: List[str],
+    cfg: AppConfig,
+    progress_cb: Optional[Callable] = None,
+) -> dict:
+    """Run SAM3 on a list of images. Returns {"ok": [...], "errors": [...]}."""
+    from app.processing.sam_processor import SamProcessor
+
+    proc = SamProcessor()
+    proc.load(
+        model_dir=cfg.sam3_model_dir,
+        model_file=cfg.sam3_model_file,
+        device=cfg.sam3_device,
+    )
+
+    results: dict = {"ok": [], "errors": []}
+    for i, path in enumerate(paths, 1):
+        try:
+            mask_paths = proc.generate_masks(
+                image_path=path,
+                labels=labels,
+                opacity=cfg.sam3_mask_opacity,
+                invert=cfg.sam3_mask_invert,
+                confidence=cfg.sam3_confidence,
+            )
+            results["ok"].append({"path": str(path), "masks": [str(m) for m in mask_paths]})
+        except Exception as e:
+            results["errors"].append({"path": str(path), "error": str(e)})
+        if progress_cb:
+            progress_cb(i, len(paths), path, path not in [d["path"] for d in results["errors"]], "")
+
+    return results
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  LM Studio — VRAM management
+# ──────────────────────────────────────────────────────────────────────────────
+
+def unload_llm_model(cfg: AppConfig) -> dict:
+    """
+    Ask LM Studio to unload the current model to free VRAM.
+    Uses the LM Studio /api/v0 management API (LM Studio 0.3+).
+    Returns {"ok": bool, "message": str}.
+    """
+    import httpx
+    from app.config_manager import normalize_base_url
+
+    # Strip /v1 to get the LM Studio root URL
+    base = normalize_base_url(cfg.api_base_url).rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
+
+    headers = {"Content-Type": "application/json"}
+    if cfg.api_key:
+        headers["Authorization"] = f"Bearer {cfg.api_key}"
+
+    model_id = cfg.model_name
+    tried = []
+
+    # LM Studio 0.3+ supports POST /api/v0/models/{id}/unload
+    for url in [
+        f"{base}/api/v0/models/{model_id}/unload",
+        f"{base}/api/v0/models/unload",
+    ]:
+        tried.append(url)
+        try:
+            body = {} if "unload" in url and model_id not in url else None
+            if body is not None:
+                body = {"identifier": model_id}
+            resp = httpx.post(url, json=body or {}, headers=headers, timeout=15.0)
+            if resp.status_code in (200, 201, 204):
+                return {"ok": True, "message": f"Model '{model_id}' unloaded (VRAM freed)"}
+        except Exception:
+            pass
+
+    return {
+        "ok": False,
+        "message": (
+            f"Could not unload '{model_id}' — "
+            "LM Studio may not support the unload API at this version, "
+            "or the model name doesn't match. VRAM may still be in use."
+        ),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 #  Connection test
 # ──────────────────────────────────────────────────────────────────────────────
 
